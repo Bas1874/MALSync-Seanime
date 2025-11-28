@@ -1,0 +1,22 @@
+{
+    "id": "MALSync",
+    "name": "MALSync",
+    "version": "1.0.0",
+    "manifestURI": "",
+    "language": "typescript",
+    "type": "plugin",
+    "description": "Adds MyAnimeList Syncing To Seanime",
+    "author": "bas1874",
+    "icon": "https://cdn.myanimelist.net/images/favicon.ico",
+    "website": "",
+    "lang": "en",
+    "payloadURI": "",
+    "plugin": {
+        "version": "1",
+        "permissions": {
+            "scopes": ["storage", "anilist"]
+        }
+    },
+    "isDevelopment": false
+}
+
