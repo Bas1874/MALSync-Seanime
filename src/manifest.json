@@ -10,7 +10,7 @@
     "icon": "https://cdn.myanimelist.net/images/favicon.ico",
     "website": "",
     "lang": "en",
-    "payloadURI": "",
+    "payloadURI": "https://raw.githubusercontent.com/Bas1874/MALSync-Seanime/refs/heads/main/src/manifest.json",
     "plugin": {
         "version": "1",
         "permissions": {
