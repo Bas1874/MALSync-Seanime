@@ -36,7 +36,17 @@ function init() {
 		const clientIdRef = ctx.fieldRef<string>($storage.get("malsync.clientId") || "");
 		const clientSecretRef = ctx.fieldRef<string>($storage.get("malsync.clientSecret") || "");
 		const authCodeRef = ctx.fieldRef<string>($storage.get("malsync.authCode") || "");
+		
+		// Preferences
+		const liveSyncRef = ctx.fieldRef<boolean>($storage.get("malsync.liveSync") ?? true);
+		const syncOnStartupRef = ctx.fieldRef<boolean>($storage.get("malsync.syncOnStartup") ?? false);
+		const syncEvery24hRef = ctx.fieldRef<boolean>($storage.get("malsync.syncEvery24h") ?? false);
 		const syncDeletionsRef = ctx.fieldRef<boolean>($storage.get("malsync.syncDeletions") ?? false);
+		const syncRemovalsSafeRef = ctx.fieldRef<boolean>($storage.get("malsync.syncRemovalsSafe") ?? false);
+		
+		// NEW: Sync Direction
+		// "ANI_TO_MAL" or "MAL_TO_ANI"
+		const syncModeRef = ctx.fieldRef<string>($storage.get("malsync.syncMode") || "ANI_TO_MAL");
 
 		// --- HELPERS ---
 		function generateCodeVerifier() {
@@ -72,9 +82,9 @@ function init() {
 ==================================================
 ACTION: ${action} | ANIME: ${title}
 --------------------------------------------------
-[MAL BEFORE]: ${JSON.stringify(malData || "null")}
-[ANILIST SOURCE]: ${JSON.stringify(aniData)}
-[PAYLOAD SENT]: ${JSON.stringify(payload, null, 2)}
+[MAL]: ${JSON.stringify(malData || "null")}
+[ANILIST]: ${JSON.stringify(aniData)}
+[PAYLOAD]: ${JSON.stringify(payload, null, 2)}
 ==================================================
 `;
 			const current = rawDataOutput.get();
@@ -86,7 +96,7 @@ ACTION: ${action} | ANIME: ${title}
 			return new Promise((resolve) => ctx.setTimeout(resolve, ms));
 		}
 
-		function normalizeStatus(statusAL: string): string | null {
+		function normalizeStatusToMal(statusAL: string): string | null {
 			const map: Record<string, string> = {
 				"COMPLETED": "completed",
 				"CURRENT": "watching",
@@ -96,6 +106,17 @@ ACTION: ${action} | ANIME: ${title}
 				"REPEATING": "watching",
 			};
 			return map[statusAL] || null;
+		}
+
+		function normalizeStatusToAni(statusMAL: string): $app.AL_MediaListStatus | null {
+			const map: Record<string, $app.AL_MediaListStatus> = {
+				"completed": "COMPLETED",
+				"watching": "CURRENT",
+				"dropped": "DROPPED",
+				"on_hold": "PAUSED",
+				"plan_to_watch": "PLANNING",
+			};
+			return map[statusMAL] || null;
 		}
 
 		// --- TOKEN MANAGER ---
@@ -268,6 +289,21 @@ ACTION: ${action} | ANIME: ${title}
 			return allEntries;
 		}
 
+		// --- ANILIST HELPERS ---
+		async function getAniListIdByMalId(malId: number): Promise<number | null> {
+			try {
+				// Custom GraphQL Query to find Media by idMal
+				const query = `query($id: Int) { Media(idMal: $id, type: ANIME) { id } }`;
+				const data = await $anilist.customQuery(query, { id: malId });
+				if (data && data.data && data.data.Media && data.data.Media.id) {
+					return data.data.Media.id;
+				}
+				return null;
+			} catch(e) {
+				return null;
+			}
+		}
+
 		// --- EVENT HANDLERS ---
 
 		ctx.registerEventHandler("nav-status", () => currentPage.set("status"));
@@ -286,7 +322,12 @@ ACTION: ${action} | ANIME: ${title}
 		});
 		
 		ctx.registerEventHandler("save-prefs", () => {
+			$storage.set("malsync.liveSync", liveSyncRef.current);
+			$storage.set("malsync.syncOnStartup", syncOnStartupRef.current);
+			$storage.set("malsync.syncEvery24h", syncEvery24hRef.current);
 			$storage.set("malsync.syncDeletions", syncDeletionsRef.current);
+			$storage.set("malsync.syncRemovalsSafe", syncRemovalsSafeRef.current);
+			$storage.set("malsync.syncMode", syncModeRef.current); // Save Mode
 			addLog("Preferences saved", "success");
 			settingsFeedback.set("✅ Preferences Saved!");
 		});
@@ -330,203 +371,9 @@ ACTION: ${action} | ANIME: ${title}
 			addLog("Stopping sync...", "warn");
 		});
 
-		// --- FULL SYNC HANDLER ---
-		ctx.registerEventHandler("run-full-sync", async () => {
-			if (isSyncing.get()) return;
-			isSyncing.set(true);
-			shouldStop.set(false);
-			syncProgress.set(0);
-			syncMessage.set("Starting...");
-			addLog("Starting Full Sync...", "info");
+		ctx.registerEventHandler("run-sync-ani-to-mal", () => executeFullSync("ANI_TO_MAL"));
+		ctx.registerEventHandler("run-sync-mal-to-ani", () => executeFullSync("MAL_TO_ANI"));
 
-			try {
-				syncMessage.set("Fetching MAL List...");
-				const malList = await fetchFullMalList();
-				
-				const malMap = new Map<string, any>();
-				const malIds = new Set<string>();
-
-				malList.forEach((item: any) => {
-					if (item.node && item.node.id) {
-						const strId = String(item.node.id);
-						malMap.set(strId, item.list_status || {});
-						malIds.add(strId);
-					}
-				});
-				addLog(`Fetched ${malList.length} entries from MAL`, "info");
-
-				if (shouldStop.get()) throw new Error("Cancelled by user");
-
-				syncMessage.set("Fetching AniList...");
-				const aniCollection = await $anilist.getAnimeCollection(true);
-				
-				let aniEntries: $app.AL_AnimeCollection_MediaListCollection_Lists_Entries[] = [];
-				if (aniCollection.MediaListCollection?.lists) {
-					aniCollection.MediaListCollection.lists.forEach((list) => {
-						if (list.entries) aniEntries = aniEntries.concat(list.entries);
-					});
-				}
-				addLog(`Fetched ${aniEntries.length} entries from AniList`, "info");
-
-				let updatedCount = 0;
-				let skippedCount = 0;
-				let createdCount = 0;
-				let deletedCount = 0;
-				const total = aniEntries.length;
-				
-				const currentSession = recentlySynced.get();
-				const aniIdsFound = new Set<string>();
-
-				// --- PHASE 1: SYNC ANI -> MAL
-				for (let i = 0; i < total; i++) {
-					if (shouldStop.get()) break;
-
-					const aniItem = aniEntries[i];
-					const malId = aniItem.media.idMal;
-					
-					if (!malId) {
-						skippedCount++;
-						continue; 
-					}
-
-					const strMalId = String(malId);
-					aniIdsFound.add(strMalId);
-
-					const title = aniItem.media.title?.userPreferred || "Unknown";
-
-					const pct = Math.round(((i + 1) / total) * 100);
-					syncProgress.set(pct);
-					syncMessage.set(`${pct}% - Syncing: ${title}`);
-
-					if (currentSession.includes(malId)) {
-						skippedCount++;
-						continue;
-					}
-
-					const malItem = malMap.get(strMalId);
-					const updateData: Record<string, any> = {};
-					let needsUpdate = false;
-					const updateReasons: string[] = [];
-
-					// 1. Prepare Data
-					const targetStatus = normalizeStatus(aniItem.status || "");
-					if (targetStatus) updateData.status = targetStatus;
-
-					let targetScore = Number(aniItem.score || 0);
-					if (targetScore > 10) targetScore = Math.round(targetScore / 10);
-					updateData.score = targetScore;
-
-					const targetProgress = Number(aniItem.progress || 0);
-					updateData.num_watched_episodes = targetProgress;
-
-					const targetRewatch = Number(aniItem.repeat || 0);
-					if (targetRewatch > 0) {
-						updateData.num_times_rewatched = targetRewatch;
-						updateData.is_rewatching = aniItem.status === "REPEATING";
-					}
-
-					// 2. Logic
-					if (!malItem) {
-						needsUpdate = true;
-						updateReasons.push("New Entry");
-					} else {
-						const currentStatus = String(malItem.status || "");
-						if (targetStatus && currentStatus !== targetStatus) {
-							needsUpdate = true;
-							updateReasons.push(`Status: ${currentStatus}->${targetStatus}`);
-						}
-						
-						const currentScore = Number(malItem.score || 0);
-						if (currentScore !== targetScore) {
-							needsUpdate = true;
-							updateReasons.push(`Score: ${currentScore}->${targetScore}`);
-						}
-						
-						const currentEp = Number(malItem.num_episodes_watched || 0);
-						if (currentEp !== targetProgress) {
-							needsUpdate = true;
-							updateReasons.push(`Ep: ${currentEp}->${targetProgress}`);
-						}
-						
-						const currentRewatch = Number(malItem.num_times_rewatched || 0);
-						if (targetRewatch > 0 && currentRewatch !== targetRewatch) {
-							needsUpdate = true;
-							updateReasons.push(`Rewatch: ${currentRewatch}->${targetRewatch}`);
-						}
-					}
-
-					if (needsUpdate) {
-						try {
-							await updateMalEntry(malId, updateData);
-							recentlySynced.set([...recentlySynced.get(), malId]);
-
-							appendRawLog(title, !malItem ? "CREATED" : "UPDATED", malItem, { status: aniItem.status, score: aniItem.score, progress: aniItem.progress }, updateData);
-
-							if (!malItem) {
-								createdCount++;
-								addLog(`Created: ${title}`, "success");
-							} else {
-								updatedCount++;
-								addLog(`Updated: ${title} [${updateReasons.join(", ")}]`, "success");
-							}
-							await $_wait(500); 
-						} catch (e) {
-							addLog(`Failed: ${title} - ${(e as Error).message}`, "error");
-						}
-					} else {
-						skippedCount++;
-					}
-				}
-
-				// --- PHASE 2: HANDLE DELETIONS
-				if (!shouldStop.get() && syncDeletionsRef.current) {
-					syncMessage.set("Checking for deletions...");
-					
-					const toDelete = Array.from(malIds).filter(id => !aniIdsFound.has(id));
-					
-					if (toDelete.length > 0) {
-						addLog(`Found ${toDelete.length} items to delete from MAL`, "warn");
-						
-						for (let i = 0; i < toDelete.length; i++) {
-							if (shouldStop.get()) break;
-							
-							const idToDelete = Number(toDelete[i]);
-							const pct = Math.round(((i + 1) / toDelete.length) * 100);
-							syncProgress.set(pct);
-							syncMessage.set(`${pct}% - Deleting ID: ${idToDelete}`);
-
-							try {
-								await deleteMalEntry(idToDelete);
-								deletedCount++;
-								addLog(`Deleted MAL ID: ${idToDelete} (Not in AniList)`, "warn");
-								appendRawLog(`MAL ID ${idToDelete}`, "DELETED_SYNC", null, "Not in AniList", "DELETE");
-								await $_wait(500);
-							} catch (e) {
-								addLog(`Failed to delete ID ${idToDelete}: ${(e as Error).message}`, "error");
-							}
-						}
-					}
-				}
-
-				if (!shouldStop.get()) {
-					const delMsg = syncDeletionsRef.current ? `, Deleted: ${deletedCount}` : "";
-					addLog(`Sync Complete. Created: ${createdCount}, Updated: ${updatedCount}${delMsg}, Synced: ${skippedCount}`, "success");
-					syncMessage.set("Complete");
-				}
-
-			} catch (e) {
-				if (e.message !== "Cancelled by user") {
-					addLog(`Sync Failed: ${(e as Error).message}`, "error");
-				}
-				syncMessage.set("Stopped");
-			} finally {
-				isSyncing.set(false);
-				shouldStop.set(false);
-				await $_wait(2000);
-				syncProgress.set(0);
-				syncMessage.set("");
-			}
-		});
 
 		// --- INITIALIZATION ---
 
@@ -534,6 +381,24 @@ ACTION: ${action} | ANIME: ${title}
 			isAuthenticated.set(true);
 			statusText.set("Authenticated");
 			statusIntent.set("success");
+
+			// AUTOMATION LOGIC
+			const mode = $storage.get("malsync.syncMode") || "ANI_TO_MAL";
+
+			// Sync on Startup
+			if ($storage.get("malsync.syncOnStartup") === true) {
+				addLog(`Queuing Startup Sync (${mode})...`, "info");
+				ctx.setTimeout(() => executeFullSync(mode), 5000);
+			}
+
+			// Sync every 24h
+			if ($storage.get("malsync.syncEvery24h") === true) {
+				addLog(`Daily Sync Schedule Enabled (${mode})`, "info");
+				ctx.setInterval(() => {
+					executeFullSync(mode);
+				}, 86400000); // 24 hours
+			}
+
 		} else {
 			statusText.set("Configuration needed");
 			statusIntent.set("warning");
@@ -575,6 +440,7 @@ ACTION: ${action} | ANIME: ${title}
 
 					syncing ? tray.stack([
 						tray.text(syncMessage.get(), { style: { fontSize: "12px", textAlign: "center", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", maxWidth: "280px" } }),
+						// PROGRESS BAR
 						tray.div([], { 
 							style: { 
 								width: "100%", 
@@ -588,11 +454,12 @@ ACTION: ${action} | ANIME: ${title}
 						}),
 						tray.button({ label: "Stop Sync", onClick: "stop-sync", intent: "alert", size: "sm" })
 					], { gap: 1, style: { width: "100%" } }) 
-					: isAuthenticated.get() ? tray.button({ 
-						label: "Sync Now (AniList -> MAL)", 
-						onClick: "run-full-sync", 
-						intent: "primary" 
-					}) : tray.text(""), 
+					: isAuthenticated.get() ? tray.stack([
+						// TWO BUTTONS
+						tray.button({ label: "Sync (AniList ➜ MAL)", onClick: "run-sync-ani-to-mal", intent: "primary" }),
+						tray.button({ label: "Import (MAL ➜ AniList)", onClick: "run-sync-mal-to-ani", intent: "gray-subtle" }),
+					], { gap: 1, style: { marginTop: "5px" } })
+					: tray.text(""), 
 
 					isAuthenticated.get() 
 						? tray.text("Auto-sync is running in the background.", { style: { opacity: "0.7", fontSize: "11px", textAlign: "center" } })
@@ -637,7 +504,24 @@ ACTION: ${action} | ANIME: ${title}
 					
 					// 1. Preferences (Top)
 					tray.text("Preferences", { style: { fontWeight: "bold" } }),
+					tray.checkbox({ fieldRef: liveSyncRef, label: "Live Sync (Sync changes instantly)" }),
+					tray.checkbox({ fieldRef: syncOnStartupRef, label: "Full Sync on Startup" }),
+					tray.checkbox({ fieldRef: syncEvery24hRef, label: "Full Sync Every 24h" }),
+					
+					// SYNC MODE DROPDOWN
+					tray.select({
+						label: "Auto-Sync Mode (Direction)",
+						fieldRef: syncModeRef,
+						options: [
+							{ label: "AniList ➜ MAL (Default)", value: "ANI_TO_MAL" },
+							{ label: "MAL ➜ AniList (Import)", value: "MAL_TO_ANI" }
+						]
+					}),
+
+					tray.div([], { style: { height: "1px", background: "#444", margin: "5px 0" } }),
+					tray.checkbox({ fieldRef: syncRemovalsSafeRef, label: "Track Removals (Safe Mode)" }),
 					tray.checkbox({ fieldRef: syncDeletionsRef, label: "Sync Deletions (Danger!)" }),
+
 					tray.button({ label: "Save Preferences", onClick: "save-prefs", intent: "primary", size: "sm" }),
 					
 					tray.div([], { style: { height: "1px", background: "#444", margin: "10px 0" } }),
@@ -645,7 +529,6 @@ ACTION: ${action} | ANIME: ${title}
 					// 2. Connection Setup (Bottom)
 					tray.text("Connection Setup", { style: { fontWeight: "bold" } }),
 					
-					// NEW: Clickable Link for Config Page
 					tray.flex([
 						tray.text("1. Create App at ", { style: { fontSize: "11px" } }),
 						tray.anchor({ 
@@ -664,7 +547,7 @@ ACTION: ${action} | ANIME: ${title}
 					tray.input({ fieldRef: clientIdRef, placeholder: "Client ID", label: "Client ID" }),
 					tray.input({ fieldRef: clientSecretRef, placeholder: "Client Secret", label: "Client Secret" }),
 					
-					tray.button({ label: "Save Keys (Generates Link)", onClick: "save-config", intent: "primary", size: "sm" }),
+					tray.button({ label: "Save Keys (Generates Link)", onClick: "save-config", intent: "gray-subtle", size: "sm" }),
 					
 					feedback ? tray.text(feedback, { style: { fontSize: "12px", color: feedback.includes("✅") ? "#4caf50" : "#f44336", fontWeight: "bold" } }) : tray.text(""),
 
@@ -719,11 +602,314 @@ ACTION: ${action} | ANIME: ${title}
 			return tray.text("Unknown Page");
 		});
 
+		// --- LOGIC: EXECUTE FULL SYNC ---
+		async function executeFullSync(mode: "ANI_TO_MAL" | "MAL_TO_ANI" | "startup" | "scheduled") {
+			if (isSyncing.get()) return;
+			if (!isAuthenticated.get()) return;
+
+			// Resolve mode for automated calls
+			let direction = mode;
+			if (mode === "startup" || mode === "scheduled") {
+				direction = $storage.get("malsync.syncMode") || "ANI_TO_MAL";
+			}
+
+			isSyncing.set(true);
+			shouldStop.set(false);
+			syncProgress.set(0);
+			syncMessage.set("Starting...");
+			addLog(`Starting Sync (${direction})...`, "info");
+
+			// Settings
+			const doMirrorDelete = $storage.get("malsync.syncDeletions") === true;
+			const doSafeDelete = $storage.get("malsync.syncRemovalsSafe") === true;
+
+			try {
+				syncMessage.set("Fetching MAL List...");
+				const malList = await fetchFullMalList();
+				
+				// Map: MAL_ID -> Data
+				const malMap = new Map<string, any>();
+				const malIds = new Set<string>();
+
+				malList.forEach((item: any) => {
+					if (item.node && item.node.id) {
+						const strId = String(item.node.id);
+						malMap.set(strId, item.list_status || {});
+						malIds.add(strId);
+					}
+				});
+				addLog(`Fetched ${malList.length} entries from MAL`, "info");
+
+				if (shouldStop.get()) throw new Error("Cancelled by user");
+
+				syncMessage.set("Fetching AniList...");
+				const aniCollection = await $anilist.getAnimeCollection(true);
+				
+				// Map: AniList_Media_ID -> Entry
+				const aniEntryMap = new Map<number, any>();
+				// Map: MAL_ID -> AniList_Media_ID
+				const malToAniIdMap = new Map<string, number>();
+				
+				if (aniCollection.MediaListCollection?.lists) {
+					aniCollection.MediaListCollection.lists.forEach((list) => {
+						if (list.entries) {
+							list.entries.forEach(e => {
+								aniEntryMap.set(e.media.id, e);
+								if (e.media.idMal) {
+									malToAniIdMap.set(String(e.media.idMal), e.media.id);
+								}
+							});
+						}
+					});
+				}
+				addLog(`Fetched ${aniEntryMap.size} entries from AniList`, "info");
+
+
+				// ==========================================
+				// DIRECTION: ANILIST -> MAL
+				// ==========================================
+				if (direction === "ANI_TO_MAL") {
+					const total = aniEntryMap.size;
+					let processed = 0;
+					let updatedCount = 0;
+					let createdCount = 0;
+					let deletedCount = 0;
+					let skippedCount = 0;
+
+					// History for Safe Mode
+					const idHistory: Record<string, number> = $storage.get("malsync.idHistory") || {};
+					const newIdHistory: Record<string, number> = {};
+
+					// 1. Loop AniList Entries
+					for (const [aniId, aniItem] of aniEntryMap.entries()) {
+						if (shouldStop.get()) break;
+						processed++;
+
+						const malId = aniItem.media.idMal;
+						if (!malId) { skippedCount++; continue; }
+
+						const strMalId = String(malId);
+						const title = aniItem.media.title?.userPreferred || "Unknown";
+						newIdHistory[String(aniId)] = malId; // Update history
+
+						const pct = Math.round((processed / total) * 100);
+						syncProgress.set(pct);
+						syncMessage.set(`${pct}% - Syncing: ${title}`);
+
+						if (recentlySynced.get().includes(malId)) { skippedCount++; continue; }
+
+						const malItem = malMap.get(strMalId);
+						const updateData: Record<string, any> = {};
+						let needsUpdate = false;
+						const updateReasons: string[] = [];
+
+						// Prepare Data
+						const targetStatus = normalizeStatusToMal(aniItem.status || "");
+						if (targetStatus) updateData.status = targetStatus;
+
+						let targetScore = Number(aniItem.score || 0);
+						if (targetScore > 10) targetScore = Math.round(targetScore / 10);
+						updateData.score = targetScore;
+
+						const targetProgress = Number(aniItem.progress || 0);
+						updateData.num_watched_episodes = targetProgress;
+
+						if (aniItem.repeat && aniItem.repeat > 0) {
+							updateData.num_times_rewatched = Number(aniItem.repeat);
+							updateData.is_rewatching = aniItem.status === "REPEATING";
+						}
+
+						// Compare
+						if (!malItem) {
+							needsUpdate = true;
+							updateReasons.push("New");
+						} else {
+							if (targetStatus && String(malItem.status) !== targetStatus) needsUpdate = true;
+							if (Number(malItem.score) !== targetScore) needsUpdate = true;
+							if (Number(malItem.num_episodes_watched) !== targetProgress) needsUpdate = true;
+							if (aniItem.repeat > 0 && Number(malItem.num_times_rewatched) !== Number(aniItem.repeat)) needsUpdate = true;
+						}
+
+						if (needsUpdate) {
+							try {
+								await updateMalEntry(malId, updateData);
+								recentlySynced.set([...recentlySynced.get(), malId]);
+								appendRawLog(title, !malItem ? "CREATED" : "UPDATED", malItem, aniItem, updateData);
+								
+								if (!malItem) { createdCount++; addLog(`Created: ${title}`, "success"); }
+								else { updatedCount++; addLog(`Updated: ${title}`, "success"); }
+								await $_wait(500);
+							} catch (e) {
+								addLog(`Failed ${title}: ${(e as Error).message}`, "error");
+							}
+						} else {
+							skippedCount++;
+						}
+					}
+					
+					$storage.set("malsync.idHistory", newIdHistory);
+
+					// 2. Deletions
+					if (!shouldStop.get() && (doMirrorDelete || doSafeDelete)) {
+						syncMessage.set("Checking deletions...");
+						const malIdsArray = Array.from(malIds);
+						
+						for(let i=0; i<malIdsArray.length; i++) {
+							if (shouldStop.get()) break;
+							const mId = malIdsArray[i];
+							
+							// Check if this MAL ID exists in AniList
+							if (!malToAniIdMap.has(mId)) {
+								// Not in AniList. Should we delete?
+								let shouldDelete = false;
+								let reason = "";
+
+								if (doMirrorDelete) {
+									shouldDelete = true;
+									reason = "Mirror Mode";
+								} else if (doSafeDelete) {
+									// Only delete if we saw it before (in idHistory)
+									// Reverse lookup in history is hard, but we assume 1-to-1
+									const historyValues = Object.values(idHistory);
+									if (historyValues.includes(Number(mId))) {
+										shouldDelete = true;
+										reason = "Safe Mode";
+									}
+								}
+
+								if (shouldDelete) {
+									try {
+										await deleteMalEntry(Number(mId));
+										deletedCount++;
+										addLog(`Deleted MAL ID: ${mId} (${reason})`, "warn");
+										appendRawLog(`MAL ID ${mId}`, "DELETED", null, null, "DELETE");
+										await $_wait(500);
+									} catch (e) {
+										addLog(`Failed delete ID ${mId}: ${(e as Error).message}`, "error");
+									}
+								}
+							}
+						}
+					}
+					
+					if (!shouldStop.get()) {
+						addLog(`Done. C:${createdCount} U:${updatedCount} D:${deletedCount} S:${skippedCount}`, "success");
+						syncMessage.set("Complete");
+					}
+				}
+
+
+				// ==========================================
+				// DIRECTION: MAL -> ANILIST
+				// ==========================================
+				else if (direction === "MAL_TO_ANI") {
+					const total = malIds.size;
+					let processed = 0;
+					let updatedCount = 0;
+					let createdCount = 0;
+
+					for (const [strMalId, malItem] of malMap.entries()) {
+						if (shouldStop.get()) break;
+						processed++;
+						
+						const malId = Number(strMalId);
+						const pct = Math.round((processed / total) * 100);
+						syncProgress.set(pct);
+						syncMessage.set(`${pct}% - Checking MAL ID: ${malId}`);
+
+						// Find AniList ID
+						let aniId = malToAniIdMap.get(strMalId);
+						let aniItem = aniId ? aniEntryMap.get(aniId) : null;
+
+						// If not found in local list, fetch ID from API
+						if (!aniId) {
+							syncMessage.set(`${pct}% - Looking up ID for ${malId}...`);
+							const fetchedId = await getAniListIdByMalId(malId);
+							if (fetchedId) {
+								aniId = fetchedId;
+								// Fetch fresh entry data just in case (or assume null means new)
+							} else {
+								addLog(`Skipped MAL ID ${malId}: Could not find AniList match`, "warn");
+								continue;
+							}
+						}
+
+						// Data to Push to AniList
+						const aniStatus = normalizeStatusToAni(malItem.status);
+						let aniScore = Number(malItem.score) || 0;
+						// Assuming AniList user uses 100 point scale, multiply by 10? 
+						// Or simpler: send raw. Seanime usually handles it.
+						// Let's multiply by 10 if it's small to be safe for default settings.
+						if (aniScore > 0 && aniScore <= 10) aniScore = aniScore * 10; 
+
+						const aniProgress = Number(malItem.num_episodes_watched) || 0;
+						const aniRepeat = Number(malItem.num_times_rewatched) || 0;
+
+						// Comparison
+						let needsUpdate = false;
+						if (!aniItem) {
+							needsUpdate = true; // New entry
+						} else {
+							if (aniStatus && aniItem.status !== aniStatus) needsUpdate = true;
+							if (aniItem.progress !== aniProgress) needsUpdate = true;
+							// Score comparison is fuzzy due to formats, update if difference > 1
+							const currentAniScore = aniItem.score || 0;
+							if (Math.abs(currentAniScore - aniScore) > 1) needsUpdate = true;
+							if (aniItem.repeat !== aniRepeat) needsUpdate = true;
+						}
+
+						if (needsUpdate) {
+							try {
+								// AniList Update
+								await $anilist.updateEntry(aniId, aniStatus, aniScore, aniProgress, undefined, undefined);
+								if (aniRepeat > 0) {
+									await $anilist.updateEntryRepeat(aniId, aniRepeat);
+								}
+
+								if (!aniItem) {
+									createdCount++;
+									addLog(`Imported to AniList: ID ${aniId}`, "success");
+								} else {
+									updatedCount++;
+									addLog(`Updated AniList: ID ${aniId}`, "success");
+								}
+								appendRawLog(`ID ${aniId}`, "IMPORT_FROM_MAL", aniItem, malItem, "UPDATE_ANILIST");
+								await $_wait(500);
+							} catch (e) {
+								addLog(`Failed to import ID ${aniId}: ${(e as Error).message}`, "error");
+							}
+						}
+					}
+
+					if (!shouldStop.get()) {
+						addLog(`Import Complete. Created: ${createdCount}, Updated: ${updatedCount}`, "success");
+						syncMessage.set("Complete");
+					}
+				}
+
+			} catch (e) {
+				if (e.message !== "Cancelled by user") {
+					addLog(`Sync Failed: ${(e as Error).message}`, "error");
+				}
+				syncMessage.set("Stopped");
+			} finally {
+				isSyncing.set(false);
+				shouldStop.set(false);
+				await $_wait(2000);
+				syncProgress.set(0);
+				syncMessage.set("");
+			}
+		}
+
 		// --- LIVE SYNC LOGIC (Hooks) ---
 
 		async function handlePostUpdateEntry(
 			e: $app.PostUpdateEntryEvent | $app.PostUpdateEntryProgressEvent | $app.PostUpdateEntryRepeatEvent
 		) {
+			// FEATURE: Check Live Sync Setting
+			const liveEnabled = $storage.get("malsync.liveSync") ?? true;
+			if (!liveEnabled) return;
+
 			if (!isAuthenticated.get()) return;
 			if (isSyncing.get()) return; 
 			if (!e.mediaId) return;
@@ -742,7 +928,6 @@ ACTION: ${action} | ANIME: ${title}
 			try {
 				await $_wait(1000); 
 
-				// Fetch Current MAL State
 				const fieldsParam = "fields=list_status{status,score,num_episodes_watched,is_rewatching,num_times_rewatched}";
 				const url = `${BASE_URI_V2}/anime/${malId}?${fieldsParam}`;
 				
@@ -756,7 +941,8 @@ ACTION: ${action} | ANIME: ${title}
 				} catch(ignore) {}
 
 				if (!aniItem) {
-					if (syncDeletionsRef.current) {
+					const doDeletions = $storage.get("malsync.syncDeletions") === true;
+					if (doDeletions) {
 						await deleteMalEntry(malId);
 						addLog(`Removed: ${title}`, "warn");
 						appendRawLog(title, "DELETED", malItem, "null", "DELETE");
@@ -769,7 +955,7 @@ ACTION: ${action} | ANIME: ${title}
 				const updateData: Record<string, any> = {};
 				let needsUpdate = false;
 
-				const targetStatus = normalizeStatus(aniItem.status || "");
+				const targetStatus = normalizeStatusToMal(aniItem.status || "");
 				if (targetStatus) updateData.status = targetStatus;
 
 				let targetScore = Number(aniItem.score || 0);
