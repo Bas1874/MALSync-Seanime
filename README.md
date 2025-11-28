@@ -1,0 +1,1 @@
+# MALSync-Seanime
