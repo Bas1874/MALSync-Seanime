@@ -3,59 +3,193 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MAL Sync Debug</title>
+    <title>Authorization | MyAnimeList Sync</title>
+    <!-- Bootstrap 5 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    
     <style>
-        body { background: #0f0f13; color: #fff; font-family: monospace; padding: 20px; }
-        .card { background: #1a1a20; border: 1px solid #333; padding: 20px; max-width: 600px; margin: 0 auto; }
-        .info { color: #888; font-size: 0.9em; margin-bottom: 5px; }
-        .val { color: #4caf50; word-break: break-all; background: #000; padding: 5px; border-radius: 4px; }
-        .err { color: #ff5555; }
+        body {
+            background-color: #0f0f13;
+            color: #ffffff;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+        }
+        .auth-card {
+            background-color: #1a1a20;
+            border: 1px solid #2d2d35;
+            border-radius: 1rem;
+            max-width: 500px;
+            width: 90%;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 2rem;
+        }
+        .logos-container {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+        .logo-img {
+            height: 50px;
+            width: auto;
+            object-fit: contain;
+        }
+        .connection-icon {
+            font-size: 1.5rem;
+            color: #555;
+        }
+        .token-display {
+            width: 100%;
+            background-color: #09090b;
+            border: 1px solid #333;
+            color: #a1a1aa;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 0.85rem;
+            padding: 15px;
+            border-radius: 8px;
+            resize: none;
+            height: 120px;
+            outline: none;
+            margin-bottom: 15px;
+        }
+        .token-display:focus {
+            border-color: #3498db;
+            color: #fff;
+        }
+        .btn-copy {
+            background-color: #2e51a2;
+            color: #fff;
+            border: none;
+            width: 100%;
+            padding: 10px;
+            border-radius: 6px;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+        .btn-copy:hover {
+            background-color: #3c65c5;
+            color: white;
+        }
+        .btn-success-custom {
+            background-color: #27ae60 !important;
+        }
+        /* Utility to hide elements */
+        .hidden { display: none !important; }
     </style>
 </head>
 <body>
-    <div class="card">
-        <h3>🔍 Debug Info</h3>
-        
-        <p class="info">Current URL:</p>
-        <div class="val" id="debug-url">Loading...</div>
-        
-        <p class="info">Detected Code:</p>
-        <div class="val" id="debug-code">Checking...</div>
 
-        <hr style="border-color: #333;">
+    <div class="auth-card">
+        <!-- Logos -->
+        <div class="logos-container">
+            <img src="https://raw.githubusercontent.com/5rahim/seanime/main/docs/static/img/logo.png" alt="Seanime" class="logo-img">
+            <i class="bi bi-x-lg connection-icon"></i>
+            <img src="https://upload.wikimedia.org/wikipedia/commons/7/7a/MyAnimeList_Logo.png" alt="MyAnimeList" class="logo-img">
+        </div>
 
-        <textarea id="final-code" style="width:100%; background:#000; color:#fff; border:1px solid #444; padding:10px;" rows="5" readonly></textarea>
-        <br><br>
-        <button class="btn btn-primary w-100" onclick="copy()">Copy Code</button>
+        <h4 class="mb-2 fw-bold" id="titleText">Processing...</h4>
+        <p class="text-center text-muted small mb-4" id="statusText">Please wait while we retrieve your code.</p>
+
+        <!-- JS Error Fallback -->
+        <div id="jsError" class="alert alert-danger w-100" style="display:none;">
+            Javascript failed to run. Please check your browser settings or copy the code manually from the URL bar.
+        </div>
+
+        <div id="alertBox" class="alert d-none w-100" role="alert"></div>
+
+        <!-- Code Container (Started as hidden via class) -->
+        <div id="codeContainer" class="w-100 hidden">
+            <textarea id="authCode" class="token-display" readonly onclick="this.select()"></textarea>
+            <button class="btn btn-copy" id="copyBtn">
+                <i class="bi bi-clipboard me-2"></i> Copy Code
+            </button>
+        </div>
     </div>
 
+    <!-- No CDN Bootstrap JS needed for this simple logic, keeping it lightweight -->
     <script>
-        // 1. Print current URL
-        document.getElementById('debug-url').innerText = window.location.href;
+        window.addEventListener('DOMContentLoaded', () => {
+            try {
+                // 1. Safe Parameter Extraction (Fallback to Regex if URLSearchParams fails)
+                let code = null;
+                let error = null;
 
-        // 2. Extract Code
-        const params = new URLSearchParams(window.location.search);
-        const code = params.get("code");
-        const error = params.get("error");
+                if (window.URLSearchParams) {
+                    const params = new URLSearchParams(window.location.search);
+                    code = params.get("code");
+                    error = params.get("error");
+                } else {
+                    // Fallback for very old browsers
+                    const match = window.location.search.match(/[?&]code=([^&]+)/);
+                    code = match ? decodeURIComponent(match[1]) : null;
+                }
 
-        if (code) {
-            document.getElementById('debug-code').innerText = "✅ Found: " + code.substring(0, 10) + "...";
-            document.getElementById('final-code').value = code;
-        } else if (error) {
-            document.getElementById('debug-code').innerHTML = "<span class='err'>❌ MAL Error: " + error + "</span>";
-            document.getElementById('final-code').value = "Error: " + error;
-        } else {
-            document.getElementById('debug-code').innerHTML = "<span class='err'>⚠️ No code in URL. Did you click 'Connect' in Seanime?</span>";
-            document.getElementById('final-code').value = "";
-        }
+                // 2. Elements
+                const titleText = document.getElementById("titleText");
+                const statusText = document.getElementById("statusText");
+                const codeContainer = document.getElementById("codeContainer");
+                const authCodeEl = document.getElementById("authCode");
+                const alertBox = document.getElementById("alertBox");
+                const copyBtn = document.getElementById("copyBtn");
 
-        function copy() {
-            const el = document.getElementById('final-code');
-            el.select();
-            navigator.clipboard.writeText(el.value);
-            alert("Copied!");
-        }
+                // 3. Logic
+                if (code) {
+                    // SUCCESS
+                    titleText.innerText = "Authorization Complete";
+                    statusText.innerText = "Copy the code below to finish setup.";
+                    authCodeEl.value = code;
+                    codeContainer.classList.remove("hidden"); // Show container
+                } else if (error) {
+                    // ERROR FROM MAL
+                    titleText.innerText = "Access Denied";
+                    statusText.innerText = "MyAnimeList refused the connection.";
+                    alertBox.innerText = "Error: " + error;
+                    alertBox.className = "alert alert-danger w-100";
+                    alertBox.classList.remove("d-none");
+                } else {
+                    // NO CODE FOUND
+                    titleText.innerText = "No Code Found";
+                    statusText.innerText = "The URL does not contain an authorization code.";
+                    alertBox.innerText = "Please try clicking 'Connect' in Seanime again.";
+                    alertBox.className = "alert alert-warning w-100";
+                    alertBox.classList.remove("d-none");
+                }
+
+                // 4. Copy Logic
+                copyBtn.addEventListener("click", () => {
+                    if(!authCodeEl.value) return;
+                    authCodeEl.select();
+                    authCodeEl.setSelectionRange(0, 99999);
+                    
+                    navigator.clipboard.writeText(authCodeEl.value).then(() => {
+                        const originalHtml = copyBtn.innerHTML;
+                        copyBtn.innerHTML = `<i class="bi bi-check-lg me-2"></i> Copied!`;
+                        copyBtn.classList.add("btn-success-custom");
+                        setTimeout(() => {
+                            copyBtn.innerHTML = originalHtml;
+                            copyBtn.classList.remove("btn-success-custom");
+                        }, 2000);
+                    }).catch(err => {
+                        alert("Failed to copy automatically. Please press Ctrl+C.");
+                    });
+                });
+
+            } catch (e) {
+                // If anything crashes, show the manual error box
+                document.getElementById("jsError").style.display = "block";
+                document.getElementById("jsError").innerText = "Script Error: " + e.message;
+            }
+        });
     </script>
 </body>
 </html>
