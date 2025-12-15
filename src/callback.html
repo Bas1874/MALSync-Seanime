@@ -11,103 +11,112 @@
     
     <style>
         body {
-            background-color: #0f0f13; /* Seanime Dark Background */
+            background-color: #0f0f13; /* Seanime Background */
             color: #ffffff;
             height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
         }
         .auth-card {
-            background-color: #1a1a20;
+            background-color: #1a1a20; /* Seanime Surface */
             border: 1px solid #2d2d35;
             border-radius: 1rem;
-            max-width: 600px;
+            max-width: 500px;
             width: 90%;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.6);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
         }
-        .logo-img {
-            height: 60px;
-            width: auto;
-            transition: transform 0.3s;
-        }
-        .logo-img:hover {
-            transform: scale(1.05);
-        }
-        .code-box {
-            background-color: #0f0f13;
-            border: 1px solid #333;
-            border-radius: 0.5rem;
-            padding: 1rem;
-            margin-top: 1.5rem;
-            position: relative;
+        .logos-container {
             display: flex;
             align-items: center;
-            justify-content: space-between;
+            justify-content: center;
+            gap: 20px;
+            margin-bottom: 20px;
         }
-        .auth-code {
+        .logo-img {
+            height: 50px;
+            width: auto;
+            object-fit: contain;
+        }
+        .connection-icon {
+            font-size: 1.5rem;
+            color: #555;
+        }
+        /* The Code Box Styling */
+        .token-display {
+            width: 100%;
+            background-color: #09090b;
+            border: 1px solid #333;
+            color: #a1a1aa;
             font-family: 'Consolas', 'Monaco', monospace;
-            font-size: 1.1rem;
-            color: #3498db; /* Blue accent */
-            word-break: break-all;
-            margin-right: 10px;
+            font-size: 0.85rem;
+            padding: 15px;
+            border-radius: 8px;
+            resize: none; /* Disable manual resize */
+            height: 120px; /* Fixed height */
+            outline: none;
+            margin-bottom: 15px;
+        }
+        .token-display:focus {
+            border-color: #3498db;
+            color: #fff;
         }
         .btn-copy {
-            background-color: #2d2d35;
+            background-color: #2e51a2;
             color: #fff;
-            border: 1px solid #444;
+            border: none;
+            width: 100%;
+            padding: 10px;
+            border-radius: 6px;
+            font-weight: 600;
+            transition: background 0.2s;
         }
         .btn-copy:hover {
-            background-color: #3498db;
-            border-color: #3498db;
+            background-color: #3c65c5;
             color: white;
         }
-        .connection-line {
-            height: 2px;
-            width: 50px;
-            background: #333;
-            margin: 0 15px;
+        .btn-success-custom {
+            background-color: #27ae60 !important;
         }
     </style>
 </head>
 <body>
 
-    <div class="auth-card p-4 p-md-5">
-        <div class="text-center mb-4 d-flex align-items-center justify-content-center">
-            <!-- Seanime Logo -->
-            <img src="https://seanime.app/logo.png" alt="Seanime" class="logo-img" onerror="this.style.display='none'">
+    <div class="auth-card p-4">
+        <!-- Logos -->
+        <div class="logos-container">
+            <!-- Stable Seanime Logo (GitHub Raw) -->
+            <img src="https://raw.githubusercontent.com/5rahim/seanime/main/docs/static/img/logo.png" alt="Seanime" class="logo-img">
             
-            <div class="connection-line"></div>
-            <i class="bi bi-arrow-left-right text-muted fs-4"></i>
-            <div class="connection-line"></div>
+            <i class="bi bi-x-lg connection-icon"></i>
 
-            <!-- MyAnimeList Logo -->
-            <img src="https://cdn.myanimelist.net/images/myanimelist_logo_short.png" alt="MyAnimeList" class="logo-img">
+            <!-- Stable MAL Logo (Wikimedia) -->
+            <img src="https://upload.wikimedia.org/wikipedia/commons/7/7a/MyAnimeList_Logo.png" alt="MyAnimeList" class="logo-img">
         </div>
 
-        <h2 class="text-center mb-2 fw-bold">Authorization Complete</h2>
-        <p class="text-center text-muted mb-4" id="statusText">Please copy the authorization code below.</p>
+        <h4 class="mb-2 fw-bold">Authorization Complete</h4>
+        <p class="text-center text-muted small mb-4" id="statusText">Copy the code below to finish setup.</p>
 
-        <div id="alertBox" class="alert d-none" role="alert"></div>
+        <div id="alertBox" class="alert d-none w-100" role="alert"></div>
 
-        <div class="code-box" id="codeContainer" style="display: none !important;">
-            <div class="auth-code" id="authCode">Generating...</div>
-            <button class="btn btn-sm btn-copy" id="copyBtn" title="Copy to Clipboard">
-                <i class="bi bi-clipboard"></i> Copy
+        <!-- Hidden container that appears on success -->
+        <div id="codeContainer" class="w-100" style="display: none;">
+            <!-- Text Area for the code -->
+            <textarea id="authCode" class="token-display" readonly onclick="this.select()"></textarea>
+            
+            <button class="btn btn-copy" id="copyBtn">
+                <i class="bi bi-clipboard me-2"></i> Copy Code
             </button>
-        </div>
-
-        <div class="text-center mt-4">
-            <small class="text-muted">Paste this code into the plugin settings to finish setup.</small>
         </div>
     </div>
 
-    <!-- Bootstrap JS -->
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
-
     <script>
-        // Logic to extract URL parameters
+        // Extract URL parameters
         const params = new URLSearchParams(window.location.search);
         const code = params.get("code");
         const error = params.get("error");
@@ -119,40 +128,33 @@
         const copyBtn = document.getElementById("copyBtn");
 
         if (code) {
-            // Success State
-            codeContainer.style.display = "flex";
-            authCodeEl.innerText = code;
-            statusText.innerText = "You have successfully authorized the application.";
+            // Success
+            codeContainer.style.display = "block";
+            authCodeEl.value = code; // Set textarea value
         } else if (error) {
-            // Error State
+            // Error
             alertBox.className = "alert alert-danger";
             alertBox.innerText = "Authorization Failed: " + error;
             alertBox.classList.remove("d-none");
             statusText.innerText = "An error occurred.";
         } else {
-            // Empty State (User just visited the link directly)
+            // No code
             alertBox.className = "alert alert-warning";
             alertBox.innerText = "No authorization code found in URL.";
             alertBox.classList.remove("d-none");
         }
 
-        // Copy Functionality
+        // Copy Function
         copyBtn.addEventListener("click", () => {
-            if(!code) return;
+            if(!authCodeEl.value) return;
             
-            navigator.clipboard.writeText(code).then(() => {
+            authCodeEl.select();
+            authCodeEl.setSelectionRange(0, 99999); // Mobile support
+
+            navigator.clipboard.writeText(authCodeEl.value).then(() => {
                 const originalHtml = copyBtn.innerHTML;
-                copyBtn.innerHTML = `<i class="bi bi-check2"></i> Copied!`;
-                copyBtn.classList.add("btn-success");
-                copyBtn.classList.remove("btn-copy");
+                copyBtn.innerHTML = `<i class="bi bi-check-lg me-2"></i> Copied!`;
+                copyBtn.classList.add("btn-success-custom");
                 
                 setTimeout(() => {
-                    copyBtn.innerHTML = originalHtml;
-                    copyBtn.classList.remove("btn-success");
-                    copyBtn.classList.add("btn-copy");
-                }, 2000);
-            });
-        });
-    </script>
-</body>
-</html>
+                    copyBtn.inner
