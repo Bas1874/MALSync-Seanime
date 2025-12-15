@@ -3,158 +3,59 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Authorization | MyAnimeList Sync</title>
-    <!-- Bootstrap 5 CSS -->
+    <title>MAL Sync Debug</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
-    <!-- Bootstrap Icons -->
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
-    
     <style>
-        body {
-            background-color: #0f0f13; /* Seanime Background */
-            color: #ffffff;
-            height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            margin: 0;
-        }
-        .auth-card {
-            background-color: #1a1a20; /* Seanime Surface */
-            border: 1px solid #2d2d35;
-            border-radius: 1rem;
-            max-width: 500px;
-            width: 90%;
-            box-shadow: 0 20px 40px rgba(0,0,0,0.6);
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-        .logos-container {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 20px;
-            margin-bottom: 20px;
-        }
-        .logo-img {
-            height: 50px;
-            width: auto;
-            object-fit: contain;
-        }
-        .connection-icon {
-            font-size: 1.5rem;
-            color: #555;
-        }
-        /* The Code Box Styling */
-        .token-display {
-            width: 100%;
-            background-color: #09090b;
-            border: 1px solid #333;
-            color: #a1a1aa;
-            font-family: 'Consolas', 'Monaco', monospace;
-            font-size: 0.85rem;
-            padding: 15px;
-            border-radius: 8px;
-            resize: none; /* Disable manual resize */
-            height: 120px; /* Fixed height */
-            outline: none;
-            margin-bottom: 15px;
-        }
-        .token-display:focus {
-            border-color: #3498db;
-            color: #fff;
-        }
-        .btn-copy {
-            background-color: #2e51a2;
-            color: #fff;
-            border: none;
-            width: 100%;
-            padding: 10px;
-            border-radius: 6px;
-            font-weight: 600;
-            transition: background 0.2s;
-        }
-        .btn-copy:hover {
-            background-color: #3c65c5;
-            color: white;
-        }
-        .btn-success-custom {
-            background-color: #27ae60 !important;
-        }
+        body { background: #0f0f13; color: #fff; font-family: monospace; padding: 20px; }
+        .card { background: #1a1a20; border: 1px solid #333; padding: 20px; max-width: 600px; margin: 0 auto; }
+        .info { color: #888; font-size: 0.9em; margin-bottom: 5px; }
+        .val { color: #4caf50; word-break: break-all; background: #000; padding: 5px; border-radius: 4px; }
+        .err { color: #ff5555; }
     </style>
 </head>
 <body>
+    <div class="card">
+        <h3>🔍 Debug Info</h3>
+        
+        <p class="info">Current URL:</p>
+        <div class="val" id="debug-url">Loading...</div>
+        
+        <p class="info">Detected Code:</p>
+        <div class="val" id="debug-code">Checking...</div>
 
-    <div class="auth-card p-4">
-        <!-- Logos -->
-        <div class="logos-container">
-            <!-- Stable Seanime Logo (GitHub Raw) -->
-            <img src="https://raw.githubusercontent.com/5rahim/seanime/main/docs/static/img/logo.png" alt="Seanime" class="logo-img">
-            
-            <i class="bi bi-x-lg connection-icon"></i>
+        <hr style="border-color: #333;">
 
-            <!-- Stable MAL Logo (Wikimedia) -->
-            <img src="https://upload.wikimedia.org/wikipedia/commons/7/7a/MyAnimeList_Logo.png" alt="MyAnimeList" class="logo-img">
-        </div>
-
-        <h4 class="mb-2 fw-bold">Authorization Complete</h4>
-        <p class="text-center text-muted small mb-4" id="statusText">Copy the code below to finish setup.</p>
-
-        <div id="alertBox" class="alert d-none w-100" role="alert"></div>
-
-        <!-- Hidden container that appears on success -->
-        <div id="codeContainer" class="w-100" style="display: none;">
-            <!-- Text Area for the code -->
-            <textarea id="authCode" class="token-display" readonly onclick="this.select()"></textarea>
-            
-            <button class="btn btn-copy" id="copyBtn">
-                <i class="bi bi-clipboard me-2"></i> Copy Code
-            </button>
-        </div>
+        <textarea id="final-code" style="width:100%; background:#000; color:#fff; border:1px solid #444; padding:10px;" rows="5" readonly></textarea>
+        <br><br>
+        <button class="btn btn-primary w-100" onclick="copy()">Copy Code</button>
     </div>
 
     <script>
-        // Extract URL parameters
+        // 1. Print current URL
+        document.getElementById('debug-url').innerText = window.location.href;
+
+        // 2. Extract Code
         const params = new URLSearchParams(window.location.search);
         const code = params.get("code");
         const error = params.get("error");
 
-        const codeContainer = document.getElementById("codeContainer");
-        const authCodeEl = document.getElementById("authCode");
-        const alertBox = document.getElementById("alertBox");
-        const statusText = document.getElementById("statusText");
-        const copyBtn = document.getElementById("copyBtn");
-
         if (code) {
-            // Success
-            codeContainer.style.display = "block";
-            authCodeEl.value = code; // Set textarea value
+            document.getElementById('debug-code').innerText = "✅ Found: " + code.substring(0, 10) + "...";
+            document.getElementById('final-code').value = code;
         } else if (error) {
-            // Error
-            alertBox.className = "alert alert-danger";
-            alertBox.innerText = "Authorization Failed: " + error;
-            alertBox.classList.remove("d-none");
-            statusText.innerText = "An error occurred.";
+            document.getElementById('debug-code').innerHTML = "<span class='err'>❌ MAL Error: " + error + "</span>";
+            document.getElementById('final-code').value = "Error: " + error;
         } else {
-            // No code
-            alertBox.className = "alert alert-warning";
-            alertBox.innerText = "No authorization code found in URL.";
-            alertBox.classList.remove("d-none");
+            document.getElementById('debug-code').innerHTML = "<span class='err'>⚠️ No code in URL. Did you click 'Connect' in Seanime?</span>";
+            document.getElementById('final-code').value = "";
         }
 
-        // Copy Function
-        copyBtn.addEventListener("click", () => {
-            if(!authCodeEl.value) return;
-            
-            authCodeEl.select();
-            authCodeEl.setSelectionRange(0, 99999); // Mobile support
-
-            navigator.clipboard.writeText(authCodeEl.value).then(() => {
-                const originalHtml = copyBtn.innerHTML;
-                copyBtn.innerHTML = `<i class="bi bi-check-lg me-2"></i> Copied!`;
-                copyBtn.classList.add("btn-success-custom");
-                
-                setTimeout(() => {
-                    copyBtn.inner
+        function copy() {
+            const el = document.getElementById('final-code');
+            el.select();
+            navigator.clipboard.writeText(el.value);
+            alert("Copied!");
+        }
+    </script>
+</body>
+</html>
