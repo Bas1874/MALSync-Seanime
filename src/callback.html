@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Authorization | MyAnimeList Sync</title>
+    <!-- Bootstrap 5 CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    
+    <style>
+        body {
+            background-color: #0f0f13; /* Seanime Dark Background */
+            color: #ffffff;
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        .auth-card {
+            background-color: #1a1a20;
+            border: 1px solid #2d2d35;
+            border-radius: 1rem;
+            max-width: 600px;
+            width: 90%;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        .logo-img {
+            height: 60px;
+            width: auto;
+            transition: transform 0.3s;
+        }
+        .logo-img:hover {
+            transform: scale(1.05);
+        }
+        .code-box {
+            background-color: #0f0f13;
+            border: 1px solid #333;
+            border-radius: 0.5rem;
+            padding: 1rem;
+            margin-top: 1.5rem;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .auth-code {
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 1.1rem;
+            color: #3498db; /* Blue accent */
+            word-break: break-all;
+            margin-right: 10px;
+        }
+        .btn-copy {
+            background-color: #2d2d35;
+            color: #fff;
+            border: 1px solid #444;
+        }
+        .btn-copy:hover {
+            background-color: #3498db;
+            border-color: #3498db;
+            color: white;
+        }
+        .connection-line {
+            height: 2px;
+            width: 50px;
+            background: #333;
+            margin: 0 15px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="auth-card p-4 p-md-5">
+        <div class="text-center mb-4 d-flex align-items-center justify-content-center">
+            <!-- Seanime Logo -->
+            <img src="https://seanime.app/logo.png" alt="Seanime" class="logo-img" onerror="this.style.display='none'">
+            
+            <div class="connection-line"></div>
+            <i class="bi bi-arrow-left-right text-muted fs-4"></i>
+            <div class="connection-line"></div>
+
+            <!-- MyAnimeList Logo -->
+            <img src="https://cdn.myanimelist.net/images/myanimelist_logo_short.png" alt="MyAnimeList" class="logo-img">
+        </div>
+
+        <h2 class="text-center mb-2 fw-bold">Authorization Complete</h2>
+        <p class="text-center text-muted mb-4" id="statusText">Please copy the authorization code below.</p>
+
+        <div id="alertBox" class="alert d-none" role="alert"></div>
+
+        <div class="code-box" id="codeContainer" style="display: none !important;">
+            <div class="auth-code" id="authCode">Generating...</div>
+            <button class="btn btn-sm btn-copy" id="copyBtn" title="Copy to Clipboard">
+                <i class="bi bi-clipboard"></i> Copy
+            </button>
+        </div>
+
+        <div class="text-center mt-4">
+            <small class="text-muted">Paste this code into the plugin settings to finish setup.</small>
+        </div>
+    </div>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+    <script>
+        // Logic to extract URL parameters
+        const params = new URLSearchParams(window.location.search);
+        const code = params.get("code");
+        const error = params.get("error");
+
+        const codeContainer = document.getElementById("codeContainer");
+        const authCodeEl = document.getElementById("authCode");
+        const alertBox = document.getElementById("alertBox");
+        const statusText = document.getElementById("statusText");
+        const copyBtn = document.getElementById("copyBtn");
+
+        if (code) {
+            // Success State
+            codeContainer.style.display = "flex";
+            authCodeEl.innerText = code;
+            statusText.innerText = "You have successfully authorized the application.";
+        } else if (error) {
+            // Error State
+            alertBox.className = "alert alert-danger";
+            alertBox.innerText = "Authorization Failed: " + error;
+            alertBox.classList.remove("d-none");
+            statusText.innerText = "An error occurred.";
+        } else {
+            // Empty State (User just visited the link directly)
+            alertBox.className = "alert alert-warning";
+            alertBox.innerText = "No authorization code found in URL.";
+            alertBox.classList.remove("d-none");
+        }
+
+        // Copy Functionality
+        copyBtn.addEventListener("click", () => {
+            if(!code) return;
+            
+            navigator.clipboard.writeText(code).then(() => {
+                const originalHtml = copyBtn.innerHTML;
+                copyBtn.innerHTML = `<i class="bi bi-check2"></i> Copied!`;
+                copyBtn.classList.add("btn-success");
+                copyBtn.classList.remove("btn-copy");
+                
+                setTimeout(() => {
+                    copyBtn.innerHTML = originalHtml;
+                    copyBtn.classList.remove("btn-success");
+                    copyBtn.classList.add("btn-copy");
+                }, 2000);
+            });
+        });
+    </script>
+</body>
+</html>
